@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import datetime
 from supabase import create_client, Client
+import plotly.express as px  # <-- La nouvelle bibliothèque magique pour les graphiques !
 
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Charbonneur Business", page_icon="🚕", layout="wide", initial_sidebar_state="expanded")
@@ -63,13 +64,29 @@ if menu == "🏠 Tableau de Bord":
             df_paiements = pd.DataFrame(p_data)
             df_paiements['date'] = pd.to_datetime(df_paiements['date'])
             df_paiements = df_paiements.groupby(df_paiements['date'].dt.date)['montant'].sum().reset_index()
-            df_paiements.set_index('date', inplace=True)
-            st.bar_chart(df_paiements['montant'], color="#3b82f6")
+            
+            # --- LE NOUVEAU GRAPHIQUE PLOTLY (Optimisé pour Mobile) ---
+            fig = px.area(df_paiements, x='date', y='montant', 
+                          labels={'date': '', 'montant': 'Revenus ($)'},
+                          markers=True) # Ajoute des petits points sur la courbe
+            
+            # Personnalisation du design
+            fig.update_traces(line_color='#3b82f6', fillcolor='rgba(59, 130, 246, 0.2)')
+            fig.update_layout(
+                margin=dict(l=0, r=0, t=10, b=0), # Supprime les marges inutiles sur téléphone
+                plot_bgcolor='rgba(0,0,0,0)',
+                paper_bgcolor='rgba(0,0,0,0)',
+                xaxis=dict(showgrid=False),
+                yaxis=dict(showgrid=True, gridcolor='#e6e6f1'),
+                hovermode="x unified" # Bulle d'info super élégante quand on touche l'écran
+            )
+            # Affichage en demandant de prendre toute la largeur disponible
+            st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+            
         else:
             st.info("Aucun paiement pour générer le graphique.")
 
     with col_hist:
-        # NOUVEAUTÉ : Historique des derniers versements globaux
         st.subheader("🕒 Derniers Versements")
         hist_data = supabase.table('paiements').select('date, montant, chauffeurs(nom)').order('date', desc=True).limit(7).execute().data
         
@@ -139,12 +156,11 @@ elif menu == "💳 Paiements":
                 st.rerun()
 
 # ==========================================
-# 👥 3. CHAUFFEURS (Avec Profil & Montant Libre)
+# 👥 3. CHAUFFEURS
 # ==========================================
 elif menu == "👥 Chauffeurs":
     st.title("Gestion des Chauffeurs")
     
-    # NOUVEAUTÉ : Onglet Profil
     tab_liste, tab_profil, tab_ajout, tab_edit = st.tabs(["📋 Liste", "👤 Profil Chauffeur", "➕ Ajouter", "✏️ Modifier"])
     
     with tab_liste:
@@ -157,7 +173,6 @@ elif menu == "👥 Chauffeurs":
                 del d['vehicules']
             st.dataframe(pd.DataFrame(liste_c), hide_index=True, use_container_width=True)
 
-    # --- LE NOUVEAU PROFIL CHAUFFEUR ---
     with tab_profil:
         c_profil_data = supabase.table('chauffeurs').select('id, nom, contact, montant_total, versement_hebdo, vehicules(type, plaque)').execute().data
         if not c_profil_data:
@@ -168,13 +183,11 @@ elif menu == "👥 Chauffeurs":
             cp_id = int(choix_profil.split(" - ")[0])
             infos = next(item for item in c_profil_data if item["id"] == cp_id)
             
-            # Récupérer l'historique du chauffeur
             historique_chauf = supabase.table('paiements').select('date, montant').eq('chauffeur_id', cp_id).order('date', desc=True).execute().data
             deja_paye = sum(p['montant'] for p in historique_chauf) if historique_chauf else 0.0
             reste = infos['montant_total'] - deja_paye
             progression = int((deja_paye / infos['montant_total']) * 100) if infos['montant_total'] > 0 else 0
             
-            # LOGIQUE DU BADGE (Touche personnelle)
             statut_badge = "⚪ Nouveau (Aucun paiement)"
             if reste <= 0:
                 statut_badge = "🎉 Contrat Terminé"
@@ -190,7 +203,6 @@ elif menu == "👥 Chauffeurs":
                 else:
                     statut_badge = f"🔴 Alerte Rouge (Aucun paiement depuis {jours_ecoules} jours)"
 
-            # Affichage du profil
             with st.container(border=True):
                 colA, colB = st.columns(2)
                 colA.subheader(f"👤 {infos['nom']}")
@@ -212,7 +224,6 @@ elif menu == "👥 Chauffeurs":
             else:
                 st.info("Ce chauffeur n'a encore fait aucun versement.")
 
-    # --- AJOUTER CHAUFFEUR (Avec montant libre) ---
     with tab_ajout:
         tous_v = supabase.table('vehicules').select('id, type, plaque').execute().data
         c_assignes = supabase.table('chauffeurs').select('vehicule_id').execute().data
@@ -233,7 +244,6 @@ elif menu == "👥 Chauffeurs":
                 col3, col4, col5 = st.columns(3)
                 duree = col3.number_input("Durée estimée (mois)", min_value=1, value=6)
                 montant_hebdo = col4.number_input("Versement hebdo prévu ($)", min_value=1.0, value=100.0)
-                # NOUVEAUTÉ : Le montant total est maintenant libre à la saisie !
                 montant_total = col5.number_input("Somme Totale Fixée ($)*", min_value=1.0, value=2400.0, step=100.0)
                 
                 if st.form_submit_button("Sauvegarder", use_container_width=True) and nom.strip():
