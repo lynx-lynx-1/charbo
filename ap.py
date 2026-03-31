@@ -42,11 +42,9 @@ st.write("---")
 # 🏠 1. TABLEAU DE BORD (DASHBOARD GLOBAL)
 # ==========================================
 if menu == "🏠 Dashboard":
-    # 1. Calcul des Recettes (Paiements des chauffeurs)
     paies_data = supabase.table('paiements').select('montant').execute().data
     total_paiements = sum(p['montant'] for p in paies_data) if paies_data else 0.0
     
-    # 2. Calcul de la Trésorerie (Opérations)
     ops_data = supabase.table('operations').select('type_op, montant').execute().data
     total_emprunts = 0.0
     total_depenses = 0.0
@@ -58,7 +56,6 @@ if menu == "🏠 Dashboard":
             elif op['type_op'] == "🔴 Dépense Globale (Achat, Réparation)": total_depenses += op['montant']
             elif op['type_op'] == "🔴 Retrait Associé (Part sur une moto)": total_retraits += op['montant']
 
-    # La Vraie Caisse = Argent gagné + Argent emprunté - Dépenses - Argent partagé
     caisse_reelle = total_paiements + total_emprunts - total_depenses - total_retraits
     
     col1, col2, col3 = st.columns(3)
@@ -94,11 +91,11 @@ if menu == "🏠 Dashboard":
             st.info("Aucun historique récent.")
 
 # ==========================================
-# 💼 2. TRÉSORERIE & COMPTABILITÉ (NOUVEAU)
+# 💼 2. TRÉSORERIE & COMPTABILITÉ (AVEC CRUD)
 # ==========================================
 elif menu == "💼 Trésorerie":
     st.title("Comptabilité")
-    tab_saisir, tab_hist = st.tabs(["✍️ Saisir une opération", "📜 Historique"])
+    tab_saisir, tab_hist, tab_edit = st.tabs(["✍️ Saisir", "📜 Historique", "✏️ Modifier / Annuler"])
     
     with tab_saisir:
         with st.container(border=True):
@@ -109,7 +106,6 @@ elif menu == "💼 Trésorerie":
                     "🟢 Emprunt / Dette (Entrée)"
                 ])
                 
-                # Charger les véhicules si c'est un retrait associé
                 tous_v = supabase.table('vehicules').select('id, type, plaque').execute().data
                 options_v = ["Aucun"] + [f"{v['id']} - {v['type']} ({v['plaque']})" for v in tous_v]
                 
@@ -135,13 +131,61 @@ elif menu == "💼 Trésorerie":
         if not ops_hist:
             st.info("Aucune opération comptable enregistrée.")
         else:
-            # Formatage pour affichage propre
             for op in ops_hist:
                 op['Moto'] = op['vehicules']['plaque'] if op['vehicules'] else "-"
-                op['Type'] = op['type_op'].split(" ")[1] # Garde juste "Dépense", "Retrait", "Emprunt"
+                op['Type'] = op['type_op'].split(" ")[1]
                 del op['vehicules']
                 del op['type_op']
             st.dataframe(pd.DataFrame(ops_hist)[['date', 'Type', 'montant', 'Moto', 'motif', 'id']], hide_index=True, use_container_width=True)
+
+    with tab_edit:
+        ops_edit_data = supabase.table('operations').select('id, type_op, montant, motif, date, vehicule_id').execute().data
+        if not ops_edit_data:
+            st.info("Aucune opération à modifier.")
+        else:
+            options_op = [f"{op['id']} - {op['type_op'].split(' ')[1]} : {op['montant']}$ ({op['motif']})" for op in ops_edit_data]
+            op_choisie = st.selectbox("Sélectionner l'opération à corriger", options_op)
+            op_id = int(op_choisie.split(" - ")[0])
+            infos_op = next(item for item in ops_edit_data if item["id"] == op_id)
+            
+            with st.form("form_edit_op"):
+                types_op_list = ["🔴 Dépense Globale (Achat, Réparation)", "🔴 Retrait Associé (Part sur une moto)", "🟢 Emprunt / Dette (Entrée)"]
+                idx_type = types_op_list.index(infos_op['type_op']) if infos_op['type_op'] in types_op_list else 0
+                new_type_op = st.selectbox("Type", types_op_list, index=idx_type)
+                
+                tous_v = supabase.table('vehicules').select('id, type, plaque').execute().data
+                options_v = ["Aucun"] + [f"{v['id']} - {v['type']} ({v['plaque']})" for v in tous_v]
+                
+                idx_v = 0
+                if infos_op['vehicule_id']:
+                    for i, v in enumerate(tous_v):
+                        if v['id'] == infos_op['vehicule_id']:
+                            idx_v = i + 1
+                            break
+                new_vehicule = st.selectbox("Moto", options_v, index=idx_v)
+                
+                col1, col2 = st.columns(2)
+                new_montant = col1.number_input("Montant ($)", min_value=1.0, value=float(infos_op['montant']))
+                try: parsed_date = datetime.datetime.strptime(infos_op['date'], "%Y-%m-%d").date()
+                except: parsed_date = datetime.date.today()
+                new_date = col2.date_input("Date", parsed_date)
+                
+                new_motif = st.text_input("Motif", value=infos_op['motif'])
+                
+                col_upd, col_del = st.columns(2)
+                if col_upd.form_submit_button("💾 Mettre à jour", use_container_width=True):
+                    v_id = None if new_vehicule == "Aucun" else int(new_vehicule.split(" - ")[0])
+                    supabase.table('operations').update({
+                        "type_op": new_type_op, "montant": new_montant, "motif": new_motif, 
+                        "date": str(new_date), "vehicule_id": v_id
+                    }).eq("id", op_id).execute()
+                    st.success("Opération mise à jour !")
+                    st.rerun()
+                
+                if col_del.form_submit_button("❌ Supprimer", use_container_width=True):
+                    supabase.table('operations').delete().eq("id", op_id).execute()
+                    st.error("Opération supprimée !")
+                    st.rerun()
 
 # ==========================================
 # 💳 3. PAIEMENTS
@@ -222,7 +266,6 @@ elif menu == "👥 Chauffeurs":
             reste = infos['montant_total'] - deja_paye
             progression = int((deja_paye / infos['montant_total']) * 100) if infos['montant_total'] > 0 else 0
             
-            # Calcul des retraits associés à SA moto
             retraits_moto = 0.0
             if infos['vehicule_id']:
                 ops_moto = supabase.table('operations').select('montant').eq('vehicule_id', infos['vehicule_id']).eq('type_op', '🔴 Retrait Associé (Part sur une moto)').execute().data
