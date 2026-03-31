@@ -11,14 +11,10 @@ st.set_page_config(page_title="Charbonneur Business", page_icon="🚕", layout="
 st.markdown("""
     <style>
     [data-testid="collapsedControl"] { display: none; }
-    #MainMenu {visibility: hidden;} 
-    header {visibility: hidden;} 
-    footer {visibility: hidden;}
-    
+    #MainMenu {visibility: hidden;} header {visibility: hidden;} footer {visibility: hidden;}
     .stRadio > div { gap: 10px !important; justify-content: center; flex-wrap: wrap; }
-    .stRadio p { font-size: 16px !important; font-weight: 800 !important; color: #1E3A8A; padding: 10px 15px; background-color: #f0f2f6; border-radius: 12px; margin: 0; }
+    .stRadio p { font-size: 15px !important; font-weight: 800 !important; color: #1E3A8A; padding: 10px 15px; background-color: #f0f2f6; border-radius: 12px; margin: 0; }
     .stRadio p:active { background-color: #d1d5db; }
-    
     div[data-testid="metric-container"] { background-color: #ffffff; border: 1px solid #e6e6f1; border-radius: 15px; padding: 15px; box-shadow: 2px 4px 10px rgba(0, 0, 0, 0.08); }
     h1, h2, h3 { color: #1E3A8A; }
     </style>
@@ -39,28 +35,42 @@ supabase = init_connection()
 st.markdown("<h1 style='text-align: center; margin-top: -50px;'>🚕 Charbonneur Business</h1>", unsafe_allow_html=True)
 st.markdown(f"<p style='text-align: center; color: gray; font-weight: bold;'>📅 {datetime.date.today().strftime('%d/%m/%Y')}</p>", unsafe_allow_html=True)
 
-menu = st.radio("NAVIGATION", ["🏠 Dashboard", "💳 Paiements", "👥 Chauffeurs", "🏍️ Véhicules"], horizontal=True, label_visibility="collapsed")
+menu = st.radio("NAVIGATION", ["🏠 Dashboard", "💳 Paiements", "💼 Trésorerie", "👥 Chauffeurs", "🏍️ Véhicules"], horizontal=True, label_visibility="collapsed")
 st.write("---")
 
 # ==========================================
-# 🏠 1. TABLEAU DE BORD (DASHBOARD)
+# 🏠 1. TABLEAU DE BORD (DASHBOARD GLOBAL)
 # ==========================================
 if menu == "🏠 Dashboard":
+    # 1. Calcul des Recettes (Paiements des chauffeurs)
     paies_data = supabase.table('paiements').select('montant').execute().data
-    caisse_totale = sum(p['montant'] for p in paies_data) if paies_data else 0.0
-    nb_vehicules = len(supabase.table('vehicules').select('id').execute().data)
-    nb_chauffeurs = len(supabase.table('chauffeurs').select('id').execute().data)
+    total_paiements = sum(p['montant'] for p in paies_data) if paies_data else 0.0
+    
+    # 2. Calcul de la Trésorerie (Opérations)
+    ops_data = supabase.table('operations').select('type_op, montant').execute().data
+    total_emprunts = 0.0
+    total_depenses = 0.0
+    total_retraits = 0.0
+    
+    if ops_data:
+        for op in ops_data:
+            if op['type_op'] == "🟢 Emprunt / Dette (Entrée)": total_emprunts += op['montant']
+            elif op['type_op'] == "🔴 Dépense Globale (Achat, Réparation)": total_depenses += op['montant']
+            elif op['type_op'] == "🔴 Retrait Associé (Part sur une moto)": total_retraits += op['montant']
+
+    # La Vraie Caisse = Argent gagné + Argent emprunté - Dépenses - Argent partagé
+    caisse_reelle = total_paiements + total_emprunts - total_depenses - total_retraits
     
     col1, col2, col3 = st.columns(3)
-    col1.metric("💰 Caisse Totale", f"{int(caisse_totale):,} $".replace(",", " "))
-    col2.metric("🏍️ Véhicules", nb_vehicules)
-    col3.metric("👥 Chauffeurs", nb_chauffeurs)
+    col1.metric("💰 Caisse Réelle", f"{int(caisse_reelle):,} $".replace(",", " "))
+    col2.metric("💸 Dépenses & Retraits", f"{int(total_depenses + total_retraits):,} $".replace(",", " "))
+    col3.metric("🏦 Dettes à rembourser", f"{int(total_emprunts):,} $".replace(",", " "))
     
     st.write("---")
     col_graph, col_hist = st.columns([1.5, 1])
     
     with col_graph:
-        st.subheader("📈 Évolution des Recettes")
+        st.subheader("📈 Évolution des Recettes (Paiements)")
         p_data = supabase.table('paiements').select('date, montant').execute().data
         if p_data:
             df_paiements = pd.DataFrame(p_data)
@@ -75,7 +85,7 @@ if menu == "🏠 Dashboard":
 
     with col_hist:
         st.subheader("🕒 Derniers Versements")
-        hist_data = supabase.table('paiements').select('date, montant, chauffeurs(nom)').order('date', desc=True).limit(7).execute().data
+        hist_data = supabase.table('paiements').select('date, montant, chauffeurs(nom)').order('date', desc=True).limit(5).execute().data
         if hist_data:
             for p in hist_data:
                 nom = p['chauffeurs']['nom'] if p['chauffeurs'] else "Inconnu"
@@ -84,7 +94,57 @@ if menu == "🏠 Dashboard":
             st.info("Aucun historique récent.")
 
 # ==========================================
-# 💳 2. PAIEMENTS
+# 💼 2. TRÉSORERIE & COMPTABILITÉ (NOUVEAU)
+# ==========================================
+elif menu == "💼 Trésorerie":
+    st.title("Comptabilité")
+    tab_saisir, tab_hist = st.tabs(["✍️ Saisir une opération", "📜 Historique"])
+    
+    with tab_saisir:
+        with st.container(border=True):
+            with st.form("form_compta", clear_on_submit=True):
+                type_op = st.selectbox("Type d'opération", [
+                    "🔴 Dépense Globale (Achat, Réparation)", 
+                    "🔴 Retrait Associé (Part sur une moto)", 
+                    "🟢 Emprunt / Dette (Entrée)"
+                ])
+                
+                # Charger les véhicules si c'est un retrait associé
+                tous_v = supabase.table('vehicules').select('id, type, plaque').execute().data
+                options_v = ["Aucun"] + [f"{v['id']} - {v['type']} ({v['plaque']})" for v in tous_v]
+                
+                st.info("💡 Si c'est un retrait pour un associé, sélectionne la moto concernée ci-dessous.")
+                vehicule_choisi = st.selectbox("Moto concernée (Optionnel)", options_v)
+                
+                col1, col2 = st.columns(2)
+                montant = col1.number_input("Montant ($)", min_value=1.0, value=100.0)
+                date_op = col2.date_input("Date", datetime.date.today())
+                motif = st.text_input("Motif (ex: Achat nouvelle moto, Part de John...)")
+                
+                if st.form_submit_button("✅ Valider l'opération", use_container_width=True):
+                    v_id = None if vehicule_choisi == "Aucun" else int(vehicule_choisi.split(" - ")[0])
+                    supabase.table('operations').insert({
+                        "type_op": type_op, "montant": montant, "motif": motif, 
+                        "date": str(date_op), "vehicule_id": v_id
+                    }).execute()
+                    st.success("Opération comptable enregistrée !")
+                    st.rerun()
+
+    with tab_hist:
+        ops_hist = supabase.table('operations').select('id, type_op, montant, motif, date, vehicules(plaque)').order('date', desc=True).execute().data
+        if not ops_hist:
+            st.info("Aucune opération comptable enregistrée.")
+        else:
+            # Formatage pour affichage propre
+            for op in ops_hist:
+                op['Moto'] = op['vehicules']['plaque'] if op['vehicules'] else "-"
+                op['Type'] = op['type_op'].split(" ")[1] # Garde juste "Dépense", "Retrait", "Emprunt"
+                del op['vehicules']
+                del op['type_op']
+            st.dataframe(pd.DataFrame(ops_hist)[['date', 'Type', 'montant', 'Moto', 'motif', 'id']], hide_index=True, use_container_width=True)
+
+# ==========================================
+# 💳 3. PAIEMENTS
 # ==========================================
 elif menu == "💳 Paiements":
     st.title("Saisie des Versements")
@@ -134,7 +194,7 @@ elif menu == "💳 Paiements":
                 st.rerun()
 
 # ==========================================
-# 👥 3. CHAUFFEURS (PROFIL MIS À JOUR)
+# 👥 4. CHAUFFEURS
 # ==========================================
 elif menu == "👥 Chauffeurs":
     st.title("Chauffeurs")
@@ -150,7 +210,7 @@ elif menu == "👥 Chauffeurs":
             st.dataframe(pd.DataFrame(liste_c), hide_index=True, use_container_width=True)
 
     with tab_profil:
-        c_profil_data = supabase.table('chauffeurs').select('id, nom, contact, montant_total, versement_hebdo, vehicules(type, plaque)').execute().data
+        c_profil_data = supabase.table('chauffeurs').select('id, nom, contact, montant_total, versement_hebdo, vehicule_id, vehicules(type, plaque)').execute().data
         if not c_profil_data: st.info("Ajoutez des chauffeurs.")
         else:
             c_choisi = st.selectbox("Inspecter un profil", [f"{c['id']} - {c['nom']}" for c in c_profil_data])
@@ -162,11 +222,14 @@ elif menu == "👥 Chauffeurs":
             reste = infos['montant_total'] - deja_paye
             progression = int((deja_paye / infos['montant_total']) * 100) if infos['montant_total'] > 0 else 0
             
-            # --- CALCUL DE LA DATE DE DÉBUT ---
+            # Calcul des retraits associés à SA moto
+            retraits_moto = 0.0
+            if infos['vehicule_id']:
+                ops_moto = supabase.table('operations').select('montant').eq('vehicule_id', infos['vehicule_id']).eq('type_op', '🔴 Retrait Associé (Part sur une moto)').execute().data
+                retraits_moto = sum(r['montant'] for r in ops_moto) if ops_moto else 0.0
+            
             if historique_chauf:
-                # Le premier paiement est le dernier élément de la liste (car classée du plus récent au plus ancien)
-                date_debut_brute = historique_chauf[-1]['date']
-                date_debut = datetime.datetime.strptime(date_debut_brute, "%Y-%m-%d").strftime("%d/%m/%Y")
+                date_debut = datetime.datetime.strptime(historique_chauf[-1]['date'], "%Y-%m-%d").strftime("%d/%m/%Y")
             else:
                 date_debut = "Aucun versement"
 
@@ -183,9 +246,10 @@ elif menu == "👥 Chauffeurs":
                 moto = f"{infos['vehicules']['type']} ({infos['vehicules']['plaque']})" if infos['vehicules'] else "Aucune moto"
                 st.write(f"📞 {infos['contact']} | 🏍️ {moto}")
                 
-                st.write("---")
+                if retraits_moto > 0:
+                    st.warning(f"⚠️ Note Associé : {int(retraits_moto)}$ ont été retirés de la caisse sur le dos de cette moto.")
                 
-                # --- LES TROIS GROS BLOCS VISUELS ---
+                st.write("---")
                 colA, colB, colC = st.columns(3)
                 colA.metric("🗓️ Début", date_debut)
                 colB.metric("✅ Déjà donné", f"{int(deja_paye)} $")
@@ -236,7 +300,7 @@ elif menu == "👥 Chauffeurs":
                     st.rerun()
 
 # ==========================================
-# 🏍️ 4. VÉHICULES
+# 🏍️ 5. VÉHICULES
 # ==========================================
 elif menu == "🏍️ Véhicules":
     st.title("Flotte")
