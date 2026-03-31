@@ -136,7 +136,7 @@ elif menu == "💼 Trésorerie":
                 op['Type'] = op['type_op'].split(" ")[1]
                 del op['vehicules']
                 del op['type_op']
-            st.dataframe(pd.DataFrame(ops_hist)[['date', 'Type', 'montant', 'Moto', 'motif', 'id']], hide_index=True, use_container_width=True)
+            st.dataframe(pd.DataFrame(ops_hist)[['date', 'Type', 'montant', 'Moto', 'motif']], hide_index=True, use_container_width=True)
 
     with tab_edit:
         ops_edit_data = supabase.table('operations').select('id, type_op, montant, motif, date, vehicule_id').execute().data
